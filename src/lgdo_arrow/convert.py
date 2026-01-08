@@ -2,6 +2,8 @@
 
 import numpy as np
 import pyarrow as pa
+# `VectorOfEncodedVectors`, `ArrayOfEncodedEqualSizedArrays` are not handled
+# here since enconding and decoding are handled by libraries like pyarrow
 from lgdo import Array, ArrayOfEqualSizedArrays, Table, VectorOfVectors
 from lgdo.types.waveformtable import WaveformTable
 
@@ -13,7 +15,7 @@ def lgdo_to_arrow(lgdo_table: Table) -> pa.Table:
     """Convert LGDO Table to Arrow Table.
 
     - Flattens nested Tables (e.g., WaveformTable) with underscore prefixes
-    - Preserves units in Arrow field metadata
+    - Preserves all attrs in Arrow field metadata
     - Uses native Arrow types (no Awkward extension types)
 
     Parameters
@@ -24,7 +26,7 @@ def lgdo_to_arrow(lgdo_table: Table) -> pa.Table:
     Returns
     -------
     pa.Table
-        Arrow table with native types and unit metadata.
+        Arrow table with native types and attrs as metadata.
     """
     arrays = {}
     fields_meta = {}
@@ -36,9 +38,8 @@ def lgdo_to_arrow(lgdo_table: Table) -> pa.Table:
                 add_columns(col, prefix=f"{full_name}_")
             else:
                 arrays[full_name] = _lgdo_col_to_arrow(col)
-                units = col.attrs.get("units") if hasattr(col, "attrs") else None
-                if units:
-                    fields_meta[full_name] = {"units": str(units)}
+                if hasattr(col, "attrs") and col.attrs:
+                    fields_meta[full_name] = {k: str(v) for k, v in col.attrs.items()}
 
     add_columns(lgdo_table)
 
@@ -59,19 +60,34 @@ def lgdo_to_arrow(lgdo_table: Table) -> pa.Table:
 def _lgdo_col_to_arrow(col) -> pa.Array:
     """Convert single LGDO column to Arrow array."""
     if isinstance(col, ArrayOfEqualSizedArrays):
-        nda = col.nda
-        flat = pa.array(nda.ravel())
-        return pa.FixedSizeListArray.from_arrays(flat, nda.shape[1])
+        return _nda_to_nested_fixed_list(col.nda)
 
     if isinstance(col, VectorOfVectors):
         offsets = np.concatenate([[0], col.cumulative_length])
-        values = pa.array(col.flattened_data)
-        return pa.ListArray.from_arrays(pa.array(offsets), values)
+
+        # Recurse if nested VectorOfVectors
+        if isinstance(col.flattened_data, VectorOfVectors):
+            values = _lgdo_col_to_arrow(col.flattened_data)
+        else:
+            values = pa.array(col.flattened_data)
+
+        return pa.ListArray.from_arrays(offsets, values)
 
     if isinstance(col, Array):
         return pa.array(col.nda)
 
     raise TypeError(f"Unsupported LGDO type: {type(col)}")
+
+
+def _nda_to_nested_fixed_list(nda: np.ndarray) -> pa.Array:
+    """Convert N-D numpy array to nested Arrow fixed_size_list."""
+    arr = pa.array(nda.ravel())
+
+    # Wrap dimensions from innermost to outermost
+    for dim in reversed(nda.shape[1:]):
+        arr = pa.FixedSizeListArray.from_arrays(arr, dim)
+
+    return arr
 
 
 # ============ Arrow → LGDO ============
@@ -149,20 +165,25 @@ def _get_single_chunk(col: pa.ChunkedArray) -> pa.Array:
     return col.chunk(0)
 
 
-def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field):
+def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field | None):
     """Convert Arrow array to LGDO column (zero-copy)."""
-    attrs = _extract_units(field)
+    attrs = _extract_attrs(field) if field else None
 
     if isinstance(col.type, pa.FixedSizeListType):
-        flat = col.values.to_numpy(zero_copy_only=True, writable=False)
-        nda = flat.reshape(-1, col.type.list_size)
+        nda = _nested_fixed_list_to_nda(col)
         return ArrayOfEqualSizedArrays(nda=nda, attrs=attrs)
 
     if isinstance(col.type, pa.ListType):
         offsets = col.offsets.to_numpy(zero_copy_only=True, writable=False)
-        values = col.values.to_numpy(zero_copy_only=True, writable=False)
+
+        # Recurse if nested list
+        if isinstance(col.values.type, pa.ListType):
+            flattened = _arrow_col_to_lgdo(col.values, None)
+        else:
+            flattened = col.values.to_numpy(zero_copy_only=True, writable=False)
+
         return VectorOfVectors(
-            flattened_data=values,
+            flattened_data=flattened,
             cumulative_length=offsets[1:],
             attrs=attrs,
         )
@@ -171,8 +192,20 @@ def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field):
     return Array(nda=nda, attrs=attrs)
 
 
-def _extract_units(field: pa.Field) -> dict | None:
-    """Extract units from Arrow field metadata."""
-    if field.metadata and b"units" in field.metadata:
-        return {"units": field.metadata[b"units"].decode()}
+def _nested_fixed_list_to_nda(arr: pa.Array) -> np.ndarray:
+    """Convert nested Arrow fixed_size_list to N-D numpy array (zero-copy)."""
+    dims = []
+
+    while isinstance(arr.type, pa.FixedSizeListType):
+        dims.append(arr.type.list_size)
+        arr = arr.values
+
+    flat = arr.to_numpy(zero_copy_only=True, writable=False)
+    return flat.reshape(-1, *dims)
+
+
+def _extract_attrs(field: pa.Field) -> dict | None:
+    """Extract all attrs from Arrow field metadata."""
+    if field.metadata:
+        return {k.decode(): v.decode() for k, v in field.metadata.items()}
     return None
