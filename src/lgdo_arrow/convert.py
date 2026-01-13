@@ -140,11 +140,14 @@ def arrow_to_lgdo(arrow_table: pa.Table) -> Table:
             dt_field = arrow_table.schema.field(parts["dt"])
             values_field = arrow_table.schema.field(parts["values"])
 
-            t0 = _arrow_col_to_lgdo(
-                _get_single_chunk(arrow_table.column(parts["t0"])), t0_field
+            # `t0` and `dt` need to be writable as required by `dspeed.build_processing_chain`.
+            t0 = Array(
+                nda=_get_single_chunk(arrow_table.column(parts["t0"])).to_numpy(zero_copy_only=False, writable=True),
+                attrs=_extract_attrs(t0_field) if t0_field else None,
             )
-            dt = _arrow_col_to_lgdo(
-                _get_single_chunk(arrow_table.column(parts["dt"])), dt_field
+            dt = Array(
+                nda=_get_single_chunk(arrow_table.column(parts["dt"])).to_numpy(zero_copy_only=False, writable=True),
+                attrs=_extract_attrs(dt_field) if dt_field else None,
             )
             values = _arrow_col_to_lgdo(
                 _get_single_chunk(arrow_table.column(parts["values"])), values_field
