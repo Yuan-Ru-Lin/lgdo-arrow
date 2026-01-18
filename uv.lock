@@ -386,7 +386,7 @@ name = "importlib-metadata"
 version = "8.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp" },
+    { name = "zipp", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f3/49/3b30cad09e7771a4982d9975a8cbf64f00d4a1ececb53297f1d9a7be1b10/importlib_metadata-8.7.1.tar.gz", hash = "sha256:49fef1ae6440c182052f407c8d34a68f72efc36db9ca90dc0113398f2fdde8bb", size = 57107, upload-time = "2025-12-21T10:00:19.278Z" }
 wheels = [
@@ -404,8 +404,7 @@ wheels = [
 
 [[package]]
 name = "legend-pydataobj"
-version = "1.17.0"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../legend-pydataobj" }
 dependencies = [
     { name = "awkward" },
     { name = "awkward-pandas" },
@@ -423,10 +422,38 @@ dependencies = [
     { name = "pint", version = "0.25.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pint-pandas" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/77/e8/0efc6a5528171224324227d20c5da6cfde2d2f8cd97efe0ddfd3e7cdecfc/legend_pydataobj-1.17.0.tar.gz", hash = "sha256:9c53c492db0cd20125f16f1da6747a5e76a77399451a6ae3d03a1880be9f4968", size = 150663, upload-time = "2025-12-08T20:42:58.052Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d3/31/aba4bf0aef743f9566a03fa6c7780ad269faeeafe01a153d92fdaf4ddcdb/legend_pydataobj-1.17.0-py3-none-any.whl", hash = "sha256:3e8a3e3c01ecede82aef6f6fdf9b14bf4b7d608d95f2eee231f3ce8d76ca8ea5", size = 123669, upload-time = "2025-12-08T20:42:56.766Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "awkward", specifier = ">=2" },
+    { name = "awkward-pandas" },
+    { name = "colorlog" },
+    { name = "dbetto", marker = "extra == 'test'" },
+    { name = "furo", marker = "extra == 'docs'" },
+    { name = "h5py", specifier = ">=3.10" },
+    { name = "hdf5plugin" },
+    { name = "hist" },
+    { name = "hist", extras = ["plot"], marker = "extra == 'docs'" },
+    { name = "jupyter", marker = "extra == 'docs'" },
+    { name = "legend-pydataobj", extras = ["docs", "test"], marker = "extra == 'all'" },
+    { name = "myst-parser", marker = "extra == 'docs'" },
+    { name = "nbsphinx", marker = "extra == 'docs'" },
+    { name = "numba", specifier = "!=0.53.*,!=0.54.*" },
+    { name = "numexpr" },
+    { name = "numpy", specifier = ">=1.21" },
+    { name = "pandas", specifier = ">=1.4.4" },
+    { name = "parse" },
+    { name = "pint", specifier = ">0.24" },
+    { name = "pint-pandas" },
+    { name = "pre-commit", marker = "extra == 'test'" },
+    { name = "pylegendtestdata", marker = "extra == 'test'" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=6.0" },
+    { name = "pytest-cov", marker = "extra == 'test'" },
+    { name = "sphinx", marker = "extra == 'docs'" },
+    { name = "sphinx-copybutton", marker = "extra == 'docs'" },
+    { name = "sphinx-inline-tabs", marker = "extra == 'docs'" },
 ]
+provides-extras = ["all", "docs", "test"]
 
 [[package]]
 name = "lgdo-arrow"
@@ -446,7 +473,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "legend-pydataobj", specifier = ">=1.0.0" },
+    { name = "legend-pydataobj", editable = "../legend-pydataobj" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "pyarrow", specifier = ">=14.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },

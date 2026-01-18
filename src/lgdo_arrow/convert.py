@@ -63,7 +63,7 @@ def _lgdo_col_to_arrow(col) -> pa.Array:
         return _nda_to_nested_fixed_list(col.nda)
 
     if isinstance(col, VectorOfVectors):
-        offsets = np.concatenate([[0], col.cumulative_length])
+        offsets = col._offsets.nda
 
         # Recurse if nested VectorOfVectors
         if isinstance(col.flattened_data, VectorOfVectors):

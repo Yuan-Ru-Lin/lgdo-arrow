@@ -4,10 +4,13 @@ version = "0.1.0"
 description = "Zero-copy conversion between LGDO and Arrow"
 requires-python = ">=3.10"
 dependencies = [
-    "legend-pydataobj>=1.0.0",
+    "legend-pydataobj",
     "pyarrow>=14.0.0",
     "numpy>=1.24.0",
 ]
+
+[tool.uv.sources]
+legend-pydataobj = { path = "../legend-pydataobj", editable = true }
 
 [project.optional-dependencies]
 dev = [
