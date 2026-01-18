@@ -103,8 +103,8 @@ def arrow_to_lgdo(arrow_table: pa.Table) -> Table:
     Parameters
     ----------
     arrow_table
-        The Arrow table to convert. Should have single chunk per column
-        for zero-copy (use row_group_size=len(table) when writing Parquet).
+        The Arrow table to convert. Must have single chunk per column
+        for zero-copy. Use ``table.combine_chunks()`` if needed.
 
     Returns
     -------
@@ -163,7 +163,7 @@ def _get_single_chunk(col: pa.ChunkedArray) -> pa.Array:
     if col.num_chunks != 1:
         raise ValueError(
             f"Expected 1 chunk, got {col.num_chunks}. "
-            "Write Parquet with row_group_size=len(table) for zero-copy."
+            "Use table.combine_chunks() before converting to LGDO."
         )
     return col.chunk(0)
 
