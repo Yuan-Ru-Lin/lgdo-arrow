@@ -187,7 +187,7 @@ def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field | None):
 
         return VectorOfVectors(
             flattened_data=flattened,
-            cumulative_length=offsets[1:],
+            offsets=offsets,
             attrs=attrs,
         )
 
