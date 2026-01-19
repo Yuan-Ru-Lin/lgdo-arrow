@@ -64,13 +64,7 @@ def _lgdo_col_to_arrow(col) -> pa.Array:
 
     if isinstance(col, VectorOfVectors):
         offsets = col._offsets.nda
-
-        # Recurse if nested VectorOfVectors
-        if isinstance(col.flattened_data, VectorOfVectors):
-            values = _lgdo_col_to_arrow(col.flattened_data)
-        else:
-            values = pa.array(col.flattened_data.nda)
-
+        values = _lgdo_col_to_arrow(col.flattened_data)
         return pa.ListArray.from_arrays(offsets, values)
 
     if isinstance(col, Array):
