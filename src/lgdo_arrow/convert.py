@@ -152,6 +152,16 @@ def arrow_to_lgdo(arrow_table: pa.Table) -> Table:
     return Table(col_dict=col_dict)
 
 
+def _to_numpy_zero_copy_except_bool(arr: pa.Array) -> np.ndarray:
+    """Convert Arrow array to numpy, zero-copy except for booleans.
+
+    Arrow booleans are bit-packed (1 bit each) while NumPy uses 1 byte each,
+    so zero-copy is impossible for boolean arrays.
+    """
+    is_bool = pa.types.is_boolean(arr.type)
+    return arr.to_numpy(zero_copy_only=not is_bool, writable=False)
+
+
 def _get_single_chunk(col: pa.ChunkedArray) -> pa.Array:
     """Get single chunk from ChunkedArray; error if multiple."""
     if col.num_chunks != 1:
@@ -177,7 +187,7 @@ def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field | None):
         if isinstance(col.values.type, pa.ListType):
             flattened = _arrow_col_to_lgdo(col.values, None)
         else:
-            flattened = col.values.to_numpy(zero_copy_only=True, writable=False)
+            flattened = _to_numpy_zero_copy_except_bool(col.values)
 
         return VectorOfVectors(
             flattened_data=flattened,
@@ -185,7 +195,7 @@ def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field | None):
             attrs=attrs,
         )
 
-    nda = col.to_numpy(zero_copy_only=True, writable=False)
+    nda = _to_numpy_zero_copy_except_bool(col)
     return Array(nda=nda, attrs=attrs)
 
 
@@ -197,7 +207,7 @@ def _nested_fixed_list_to_nda(arr: pa.Array) -> np.ndarray:
         dims.append(arr.type.list_size)
         arr = arr.values
 
-    flat = arr.to_numpy(zero_copy_only=True, writable=False)
+    flat = _to_numpy_zero_copy_except_bool(arr)
     return flat.reshape(-1, *dims)
 
 
