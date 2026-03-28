@@ -11,8 +11,6 @@ import warnings
 
 import numpy as np
 import pyarrow as pa
-# `VectorOfEncodedVectors`, `ArrayOfEncodedEqualSizedArrays` are not handled
-# here since enconding and decoding are handled by libraries like pyarrow
 from lgdo import Array, ArrayOfEqualSizedArrays, Table, VectorOfVectors
 from lgdo.types.waveformtable import WaveformTable
 
@@ -37,27 +35,19 @@ def lgdo_to_arrow(lgdo_table: Table) -> pa.Table:
     pa.Table
         Arrow table with native types and attrs as metadata.
     """
-    arrays = {}
-    fields_meta = {}
+    fields = []
+    arrays = []
 
     for name, col in lgdo_table.items():
-        arrays[name] = _lgdo_col_to_arrow(col)
-        # Top-level leaf columns carry attrs on the pa.Table field.
+        arr = _lgdo_col_to_arrow(col)
         # For Tables, attrs are already embedded in the StructArray child fields.
+        meta = None
         if not isinstance(col, Table) and hasattr(col, "attrs") and col.attrs:
-            fields_meta[name] = {k: str(v) for k, v in col.attrs.items()}
+            meta = {k: str(v) for k, v in col.attrs.items()}
+        fields.append(pa.field(name, arr.type, metadata=meta))
+        arrays.append(arr)
 
-    table = pa.table(arrays)
-    if fields_meta:
-        new_fields = []
-        for field in table.schema:
-            meta = fields_meta.get(field.name)
-            if meta:
-                field = field.with_metadata(meta)
-            new_fields.append(field)
-        table = table.cast(pa.schema(new_fields))
-
-    return table
+    return pa.Table.from_arrays(arrays, schema=pa.schema(fields))
 
 
 def _lgdo_col_to_arrow(col) -> pa.Array:
@@ -79,28 +69,18 @@ def _lgdo_col_to_arrow(col) -> pa.Array:
         return pa.StructArray.from_arrays(child_arrays, fields=child_fields)
 
     if isinstance(col, ArrayOfEqualSizedArrays):
-        return _nda_to_nested_fixed_list(col.nda)
+        arr = pa.array(col.nda.ravel())
+        for dim in reversed(col.nda.shape[1:]):
+            arr = pa.FixedSizeListArray.from_arrays(arr, dim)
+        return arr
 
     if isinstance(col, VectorOfVectors):
-        offsets = col._offsets.nda
-        values = _lgdo_col_to_arrow(col.flattened_data)
-        return pa.ListArray.from_arrays(offsets, values)
+        return pa.ListArray.from_arrays(col._offsets.nda, _lgdo_col_to_arrow(col.flattened_data))
 
     if isinstance(col, Array):
         return pa.array(col.nda)
 
     raise TypeError(f"Unsupported LGDO type: {type(col)}")
-
-
-def _nda_to_nested_fixed_list(nda: np.ndarray) -> pa.Array:
-    """Convert N-D numpy array to nested Arrow fixed_size_list."""
-    arr = pa.array(nda.ravel())
-
-    # Wrap dimensions from innermost to outermost
-    for dim in reversed(nda.shape[1:]):
-        arr = pa.FixedSizeListArray.from_arrays(arr, dim)
-
-    return arr
 
 
 # ============ Arrow → LGDO ============
@@ -135,8 +115,7 @@ def arrow_to_lgdo(arrow_table: pa.Table) -> Table:
                 "combining into one contiguous buffer (allocates memory)",
                 stacklevel=2,
             )
-        chunk = col.combine_chunks()
-        col_dict[name] = _arrow_col_to_lgdo(chunk, field)
+        col_dict[name] = _arrow_col_to_lgdo(col.combine_chunks(), field)
 
     return Table(col_dict=col_dict)
 
@@ -147,62 +126,50 @@ def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field | None):
     StructArrays whose fields are {t0, dt, values} become WaveformTables;
     other StructArrays become plain Tables.
     """
-    attrs = _extract_attrs(field) if field else None
+    attrs = (
+        {k.decode(): v.decode() for k, v in field.metadata.items()}
+        if field and field.metadata
+        else None
+    )
 
     if isinstance(col.type, pa.StructType):
-        field_names = {col.type.field(i).name for i in range(col.type.num_fields)}
         col_dict = {}
         for i in range(col.type.num_fields):
             sub_field = col.type.field(i)
             col_dict[sub_field.name] = _arrow_col_to_lgdo(col.field(sub_field.name), sub_field)
 
-        if field_names == {"t0", "dt", "values"}:
+        if col_dict.keys() == {"t0", "dt", "values"}:
             # t0 and dt need to be writable as required by dspeed.build_processing_chain
             t0 = col_dict["t0"]
             dt = col_dict["dt"]
-            t0 = Array(nda=np.array(t0.nda, copy=True), attrs=t0.attrs)
-            dt = Array(nda=np.array(dt.nda, copy=True), attrs=dt.attrs)
-            return WaveformTable(t0=t0, dt=dt, values=col_dict["values"])
+            return WaveformTable(
+                t0=Array(nda=np.array(t0.nda, copy=True), attrs=t0.attrs),
+                dt=Array(nda=np.array(dt.nda, copy=True), attrs=dt.attrs),
+                values=col_dict["values"],
+            )
 
         return Table(col_dict=col_dict)
 
     if isinstance(col.type, pa.FixedSizeListType):
-        nda = _nested_fixed_list_to_nda(col)
-        return ArrayOfEqualSizedArrays(nda=nda, attrs=attrs)
+        return ArrayOfEqualSizedArrays(nda=_nested_fixed_list_to_nda(col), attrs=attrs)
 
     if isinstance(col.type, pa.ListType):
         offsets = col.offsets.to_numpy(zero_copy_only=True, writable=False)
 
-        # Recurse if nested list
         if isinstance(col.values.type, pa.ListType):
             flattened = _arrow_col_to_lgdo(col.values, None)
         else:
             flattened = col.values.to_numpy(zero_copy_only=False, writable=False)
 
-        return VectorOfVectors(
-            flattened_data=flattened,
-            offsets=offsets,
-            attrs=attrs,
-        )
+        return VectorOfVectors(flattened_data=flattened, offsets=offsets, attrs=attrs)
 
-    nda = col.to_numpy(zero_copy_only=False, writable=False)
-    return Array(nda=nda, attrs=attrs)
+    return Array(nda=col.to_numpy(zero_copy_only=False, writable=False), attrs=attrs)
 
 
 def _nested_fixed_list_to_nda(arr: pa.Array) -> np.ndarray:
-    """Convert nested Arrow fixed_size_list to N-D numpy array (zero-copy)."""
+    """Convert nested Arrow fixed_size_list to N-D numpy array."""
     dims = []
-
     while isinstance(arr.type, pa.FixedSizeListType):
         dims.append(arr.type.list_size)
         arr = arr.values
-
-    flat = arr.to_numpy(zero_copy_only=False, writable=False)
-    return flat.reshape(-1, *dims)
-
-
-def _extract_attrs(field: pa.Field) -> dict | None:
-    """Extract all attrs from Arrow field metadata."""
-    if field.metadata:
-        return {k.decode(): v.decode() for k, v in field.metadata.items()}
-    return None
+    return arr.to_numpy(zero_copy_only=False, writable=False).reshape(-1, *dims)
