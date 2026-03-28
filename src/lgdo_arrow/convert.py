@@ -35,19 +35,8 @@ def lgdo_to_arrow(lgdo_table: Table) -> pa.Table:
     pa.Table
         Arrow table with native types and attrs as metadata.
     """
-    fields = []
-    arrays = []
-
-    for name, col in lgdo_table.items():
-        arr = _lgdo_col_to_arrow(col)
-        # For Tables, attrs are already embedded in the StructArray child fields.
-        meta = None
-        if not isinstance(col, Table) and hasattr(col, "attrs") and col.attrs:
-            meta = {k: str(v) for k, v in col.attrs.items()}
-        fields.append(pa.field(name, arr.type, metadata=meta))
-        arrays.append(arr)
-
-    return pa.Table.from_arrays(arrays, schema=pa.schema(fields))
+    struct_arr = _lgdo_col_to_arrow(lgdo_table)
+    return pa.Table.from_batches([pa.RecordBatch.from_struct_array(struct_arr)])
 
 
 def _lgdo_col_to_arrow(col) -> pa.Array:
