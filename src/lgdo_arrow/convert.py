@@ -1,4 +1,13 @@
-"""Zero-copy conversion between LGDO and Arrow tables."""
+"""Zero-copy conversion between LGDO and Arrow tables.
+
+Note on allocation: we use ``to_numpy(zero_copy_only=False)`` throughout.
+PyArrow performs zero-copy for all numeric types and only allocates when it
+must (e.g. booleans, which are bit-packed in Arrow but byte-packed in NumPy,
+or columns containing nulls that need sentinel values). Multi-chunk columns
+are combined automatically with a warning.
+"""
+
+import warnings
 
 import numpy as np
 import pyarrow as pa
@@ -107,49 +116,29 @@ def arrow_to_lgdo(arrow_table: pa.Table) -> Table:
     Parameters
     ----------
     arrow_table
-        The Arrow table to convert. Must have single chunk per column
-        for zero-copy. Use ``table.combine_chunks()`` if needed.
+        The Arrow table to convert. Multi-chunk columns are combined
+        automatically (with a warning, since this allocates).
 
     Returns
     -------
     Table
-        LGDO Table with zero-copy views of Arrow data.
-
-    Raises
-    ------
-    ValueError
-        If a column has multiple chunks.
-    pyarrow.ArrowInvalid
-        If zero-copy is not possible (nulls, incompatible types).
+        LGDO Table with zero-copy views of Arrow data where possible.
     """
     col_dict = {}
 
     for name in arrow_table.column_names:
         field = arrow_table.schema.field(name)
-        chunk = _get_single_chunk(arrow_table.column(name))
+        col = arrow_table.column(name)
+        if col.num_chunks != 1:
+            warnings.warn(
+                f"Column '{name}' has {col.num_chunks} chunks; "
+                "combining into one contiguous buffer (allocates memory)",
+                stacklevel=2,
+            )
+        chunk = col.combine_chunks()
         col_dict[name] = _arrow_col_to_lgdo(chunk, field)
 
     return Table(col_dict=col_dict)
-
-
-def _to_numpy_zero_copy_except_bool(arr: pa.Array) -> np.ndarray:
-    """Convert Arrow array to numpy, zero-copy except for booleans.
-
-    Arrow booleans are bit-packed (1 bit each) while NumPy uses 1 byte each,
-    so zero-copy is impossible for boolean arrays.
-    """
-    is_bool = pa.types.is_boolean(arr.type)
-    return arr.to_numpy(zero_copy_only=not is_bool, writable=False)
-
-
-def _get_single_chunk(col: pa.ChunkedArray) -> pa.Array:
-    """Get single chunk from ChunkedArray; error if multiple."""
-    if col.num_chunks != 1:
-        raise ValueError(
-            f"Expected 1 chunk, got {col.num_chunks}. "
-            "Use table.combine_chunks() before converting to LGDO."
-        )
-    return col.chunk(0)
 
 
 def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field | None):
@@ -188,7 +177,7 @@ def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field | None):
         if isinstance(col.values.type, pa.ListType):
             flattened = _arrow_col_to_lgdo(col.values, None)
         else:
-            flattened = _to_numpy_zero_copy_except_bool(col.values)
+            flattened = col.values.to_numpy(zero_copy_only=False, writable=False)
 
         return VectorOfVectors(
             flattened_data=flattened,
@@ -196,7 +185,7 @@ def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field | None):
             attrs=attrs,
         )
 
-    nda = _to_numpy_zero_copy_except_bool(col)
+    nda = col.to_numpy(zero_copy_only=False, writable=False)
     return Array(nda=nda, attrs=attrs)
 
 
@@ -208,7 +197,7 @@ def _nested_fixed_list_to_nda(arr: pa.Array) -> np.ndarray:
         dims.append(arr.type.list_size)
         arr = arr.values
 
-    flat = _to_numpy_zero_copy_except_bool(arr)
+    flat = arr.to_numpy(zero_copy_only=False, writable=False)
     return flat.reshape(-1, *dims)
 
 
