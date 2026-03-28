@@ -135,9 +135,10 @@ def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field | None):
                 t0=Array(nda=np.array(t0.nda, copy=True), attrs=t0.attrs),
                 dt=Array(nda=np.array(dt.nda, copy=True), attrs=dt.attrs),
                 values=col_dict["values"],
+                attrs=attrs,
             )
 
-        return Table(col_dict=col_dict)
+        return Table(col_dict=col_dict, attrs=attrs)
 
     if isinstance(col.type, pa.FixedSizeListType):
         return ArrayOfEqualSizedArrays(nda=_nested_fixed_list_to_nda(col), attrs=attrs)
