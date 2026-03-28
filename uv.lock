@@ -403,15 +403,35 @@ wheels = [
 ]
 
 [[package]]
+name = "legend-lh5io"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "awkward" },
+    { name = "colorlog" },
+    { name = "h5py" },
+    { name = "hdf5plugin" },
+    { name = "legend-pydataobj" },
+    { name = "numba" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pandas" },
+    { name = "parse" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/39/06/14f674221e8fe76fda0b1647b2baa482b0ed8b2182d99407abb731b11877/legend_lh5io-0.1.0.tar.gz", hash = "sha256:171c734c945a8926d9ffdfa3d3ec6c269b3cafc3948b77cbd8ed10fdc612aefd", size = 111663, upload-time = "2026-02-22T17:23:44.954Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/ab/9368fe66daa8fdb6f384b9c28802650c9059e6d1bdc3742f383f19b36d82/legend_lh5io-0.1.0-py3-none-any.whl", hash = "sha256:eca9e846b5949d6dd5ff64d589b368a195760c54f0ffc5dc16f5ee772ab64b88", size = 84676, upload-time = "2026-02-22T17:23:43.53Z" },
+]
+
+[[package]]
 name = "legend-pydataobj"
 source = { editable = "../legend-pydataobj" }
 dependencies = [
     { name = "awkward" },
     { name = "awkward-pandas" },
     { name = "colorlog" },
-    { name = "h5py" },
-    { name = "hdf5plugin" },
     { name = "hist" },
+    { name = "legend-lh5io" },
     { name = "numba" },
     { name = "numexpr" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -430,11 +450,11 @@ requires-dist = [
     { name = "colorlog" },
     { name = "dbetto", marker = "extra == 'test'" },
     { name = "furo", marker = "extra == 'docs'" },
-    { name = "h5py", specifier = ">=3.10" },
-    { name = "hdf5plugin" },
+    { name = "h5py", marker = "extra == 'test'" },
     { name = "hist" },
     { name = "hist", extras = ["plot"], marker = "extra == 'docs'" },
     { name = "jupyter", marker = "extra == 'docs'" },
+    { name = "legend-lh5io" },
     { name = "legend-pydataobj", extras = ["docs", "test"], marker = "extra == 'all'" },
     { name = "myst-parser", marker = "extra == 'docs'" },
     { name = "nbsphinx", marker = "extra == 'docs'" },
@@ -446,7 +466,6 @@ requires-dist = [
     { name = "pint", specifier = ">0.24" },
     { name = "pint-pandas" },
     { name = "pre-commit", marker = "extra == 'test'" },
-    { name = "pylegendtestdata", marker = "extra == 'test'" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=6.0" },
     { name = "pytest-cov", marker = "extra == 'test'" },
     { name = "sphinx", marker = "extra == 'docs'" },
