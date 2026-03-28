@@ -4,13 +4,10 @@ version = "0.1.0"
 description = "Zero-copy conversion between LGDO and Arrow"
 requires-python = ">=3.10"
 dependencies = [
-    "legend-pydataobj",
     "pyarrow>=14.0.0",
     "numpy>=1.24.0",
+    "legend-pydataobj",
 ]
-
-[tool.uv.sources]
-legend-pydataobj = { path = "../legend-pydataobj", editable = true }
 
 [project.optional-dependencies]
 dev = [
@@ -23,3 +20,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/lgdo_arrow"]
+
+[tool.uv.sources]
+legend-pydataobj = { git = "https://github.com/legend-exp/legend-pydataobj", rev = "fbd8a54" }
