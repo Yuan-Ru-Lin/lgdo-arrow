@@ -14,7 +14,7 @@ from lgdo.types.waveformtable import WaveformTable
 def lgdo_to_arrow(lgdo_table: Table) -> pa.Table:
     """Convert LGDO Table to Arrow Table.
 
-    - Flattens nested Tables (e.g., WaveformTable) with underscore prefixes
+    - Nested Tables (e.g., WaveformTable) become StructArray columns
     - Preserves all attrs in Arrow field metadata
     - Uses native Arrow types (no Awkward extension types)
 
@@ -31,19 +31,13 @@ def lgdo_to_arrow(lgdo_table: Table) -> pa.Table:
     arrays = {}
     fields_meta = {}
 
-    def add_columns(table: Table, prefix: str = "") -> None:
-        for name, col in table.items():
-            full_name = f"{prefix}{name}" if prefix else name
-            if isinstance(col, Table):
-                add_columns(col, prefix=f"{full_name}_")
-            else:
-                arrays[full_name] = _lgdo_col_to_arrow(col)
-                if hasattr(col, "attrs") and col.attrs:
-                    fields_meta[full_name] = {k: str(v) for k, v in col.attrs.items()}
+    for name, col in lgdo_table.items():
+        arrays[name] = _lgdo_col_to_arrow(col)
+        # Top-level leaf columns carry attrs on the pa.Table field.
+        # For Tables, attrs are already embedded in the StructArray child fields.
+        if not isinstance(col, Table) and hasattr(col, "attrs") and col.attrs:
+            fields_meta[name] = {k: str(v) for k, v in col.attrs.items()}
 
-    add_columns(lgdo_table)
-
-    # Build table and attach metadata to fields
     table = pa.table(arrays)
     if fields_meta:
         new_fields = []
@@ -58,7 +52,23 @@ def lgdo_to_arrow(lgdo_table: Table) -> pa.Table:
 
 
 def _lgdo_col_to_arrow(col) -> pa.Array:
-    """Convert single LGDO column to Arrow array."""
+    """Convert single LGDO column to Arrow array.
+
+    Tables (including WaveformTable) become StructArrays with child field
+    metadata preserving attrs like units.
+    """
+    if isinstance(col, Table):
+        child_arrays = []
+        child_fields = []
+        for name, sub_col in col.items():
+            child_arr = _lgdo_col_to_arrow(sub_col)
+            meta = None
+            if hasattr(sub_col, "attrs") and sub_col.attrs:
+                meta = {k: str(v) for k, v in sub_col.attrs.items()}
+            child_fields.append(pa.field(name, child_arr.type, metadata=meta))
+            child_arrays.append(child_arr)
+        return pa.StructArray.from_arrays(child_arrays, fields=child_fields)
+
     if isinstance(col, ArrayOfEqualSizedArrays):
         return _nda_to_nested_fixed_list(col.nda)
 
@@ -91,7 +101,7 @@ def arrow_to_lgdo(arrow_table: pa.Table) -> Table:
     """Convert Arrow Table to LGDO Table.
 
     - Zero-copy where possible (requires single chunk, no nulls)
-    - Reconstructs WaveformTable from *_t0, *_dt, *_values patterns
+    - StructArray columns with fields {t0, dt, values} become WaveformTables
     - Restores units from Arrow field metadata
 
     Parameters
@@ -113,41 +123,11 @@ def arrow_to_lgdo(arrow_table: pa.Table) -> Table:
         If zero-copy is not possible (nulls, incompatible types).
     """
     col_dict = {}
-    waveform_groups: dict[str, dict[str, str]] = {}
 
     for name in arrow_table.column_names:
-        # Detect waveform column patterns
-        for suffix in ("_t0", "_dt", "_values"):
-            if name.endswith(suffix):
-                prefix = name[: -len(suffix)]
-                waveform_groups.setdefault(prefix, {})[suffix[1:]] = name
-                break
-        else:
-            field = arrow_table.schema.field(name)
-            chunk = _get_single_chunk(arrow_table.column(name))
-            col_dict[name] = _arrow_col_to_lgdo(chunk, field)
-
-    # Reconstruct WaveformTables
-    for prefix, parts in waveform_groups.items():
-        if set(parts.keys()) == {"t0", "dt", "values"}:
-            t0_field = arrow_table.schema.field(parts["t0"])
-            dt_field = arrow_table.schema.field(parts["dt"])
-            values_field = arrow_table.schema.field(parts["values"])
-
-            # `t0` and `dt` need to be writable as required by `dspeed.build_processing_chain`.
-            t0 = Array(
-                nda=_get_single_chunk(arrow_table.column(parts["t0"])).to_numpy(zero_copy_only=False, writable=True),
-                attrs=_extract_attrs(t0_field) if t0_field else None,
-            )
-            dt = Array(
-                nda=_get_single_chunk(arrow_table.column(parts["dt"])).to_numpy(zero_copy_only=False, writable=True),
-                attrs=_extract_attrs(dt_field) if dt_field else None,
-            )
-            values = _arrow_col_to_lgdo(
-                _get_single_chunk(arrow_table.column(parts["values"])), values_field
-            )
-
-            col_dict[prefix] = WaveformTable(t0=t0, dt=dt, values=values)
+        field = arrow_table.schema.field(name)
+        chunk = _get_single_chunk(arrow_table.column(name))
+        col_dict[name] = _arrow_col_to_lgdo(chunk, field)
 
     return Table(col_dict=col_dict)
 
@@ -173,8 +153,29 @@ def _get_single_chunk(col: pa.ChunkedArray) -> pa.Array:
 
 
 def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field | None):
-    """Convert Arrow array to LGDO column (zero-copy)."""
+    """Convert Arrow array to LGDO column (zero-copy).
+
+    StructArrays whose fields are {t0, dt, values} become WaveformTables;
+    other StructArrays become plain Tables.
+    """
     attrs = _extract_attrs(field) if field else None
+
+    if isinstance(col.type, pa.StructType):
+        field_names = {col.type.field(i).name for i in range(col.type.num_fields)}
+        col_dict = {}
+        for i in range(col.type.num_fields):
+            sub_field = col.type.field(i)
+            col_dict[sub_field.name] = _arrow_col_to_lgdo(col.field(sub_field.name), sub_field)
+
+        if field_names == {"t0", "dt", "values"}:
+            # t0 and dt need to be writable as required by dspeed.build_processing_chain
+            t0 = col_dict["t0"]
+            dt = col_dict["dt"]
+            t0 = Array(nda=np.array(t0.nda, copy=True), attrs=t0.attrs)
+            dt = Array(nda=np.array(dt.nda, copy=True), attrs=dt.attrs)
+            return WaveformTable(t0=t0, dt=dt, values=col_dict["values"])
+
+        return Table(col_dict=col_dict)
 
     if isinstance(col.type, pa.FixedSizeListType):
         nda = _nested_fixed_list_to_nda(col)
