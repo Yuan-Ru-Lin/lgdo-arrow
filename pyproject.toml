@@ -1,6 +1,6 @@
 [project]
 name = "lgdo-arrow"
-version = "0.1.2"
+version = "0.2.0"
 description = "Zero-copy conversion between LGDO and Arrow"
 requires-python = ">=3.10"
 dependencies = [
