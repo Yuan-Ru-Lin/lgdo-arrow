@@ -39,25 +39,37 @@ def _deserialize_attr(raw: bytes):
 # ============ LGDO → Arrow ============
 
 
-def lgdo_to_arrow(lgdo_table: Table) -> pa.Table:
-    """Convert LGDO Table to Arrow Table.
+def lgdo_to_arrow(obj) -> pa.Table | pa.Array:
+    """Convert an LGDO object to its Arrow equivalent.
 
-    - Nested Tables (e.g., WaveformTable) become StructArray columns
-    - Preserves all attrs in Arrow field metadata
-    - Uses native Arrow types (no Awkward extension types)
+    Type mapping:
+
+    ========================  ==========================
+    LGDO type                 Arrow type
+    ========================  ==========================
+    Table                     pa.Table
+    WaveformTable             pa.StructArray
+    Array                     pa.Array
+    ArrayOfEqualSizedArrays   pa.FixedSizeListArray
+    VectorOfVectors           pa.ListArray
+    ========================  ==========================
+
+    Preserves all attrs as JSON-encoded Arrow field metadata.
 
     Parameters
     ----------
-    lgdo_table
-        The LGDO Table to convert.
+    obj
+        Any supported LGDO object.
 
     Returns
     -------
-    pa.Table
-        Arrow table with native types and attrs as metadata.
+    pa.Table or pa.Array
+        Arrow table (for Table) or Arrow array (for all other types).
     """
-    struct_arr = _lgdo_col_to_arrow(lgdo_table)
-    return pa.Table.from_batches([pa.RecordBatch.from_struct_array(struct_arr)])
+    if isinstance(obj, Table) and not isinstance(obj, WaveformTable):
+        struct_arr = _lgdo_col_to_arrow(obj)
+        return pa.Table.from_batches([pa.RecordBatch.from_struct_array(struct_arr)])
+    return _lgdo_col_to_arrow(obj)
 
 
 def _lgdo_col_to_arrow(col) -> pa.Array:
@@ -96,38 +108,58 @@ def _lgdo_col_to_arrow(col) -> pa.Array:
 # ============ Arrow → LGDO ============
 
 
-def arrow_to_lgdo(arrow_table: pa.Table) -> Table:
-    """Convert Arrow Table to LGDO Table.
+def arrow_to_lgdo(obj: pa.Table | pa.ChunkedArray | pa.Array):
+    """Convert an Arrow object to its LGDO equivalent.
 
-    - Zero-copy where possible (requires single chunk, no nulls)
-    - StructArray columns with fields {t0, dt, values} become WaveformTables
-    - Restores units from Arrow field metadata
+    Type mapping:
+
+    ==================================  ==========================
+    Arrow type                          LGDO type
+    ==================================  ==========================
+    pa.Table                            Table
+    StructArray with {t0, dt, values}   WaveformTable
+    StructArray (other)                 Table
+    FixedSizeListArray                  ArrayOfEqualSizedArrays
+    ListArray                           VectorOfVectors
+    primitive Array                     Array
+    ==================================  ==========================
+
+    Zero-copy where possible. Multi-chunk columns are combined
+    automatically (with a warning, since this allocates).
 
     Parameters
     ----------
-    arrow_table
-        The Arrow table to convert. Multi-chunk columns are combined
-        automatically (with a warning, since this allocates).
+    obj
+        Any supported Arrow object.
 
     Returns
     -------
-    Table
-        LGDO Table with zero-copy views of Arrow data where possible.
+    Table, WaveformTable, Array, ArrayOfEqualSizedArrays, or VectorOfVectors
     """
-    col_dict = {}
+    if isinstance(obj, pa.Table):
+        col_dict = {}
+        for name in obj.column_names:
+            field = obj.schema.field(name)
+            col = obj.column(name)
+            if col.num_chunks != 1:
+                warnings.warn(
+                    f"Column '{name}' has {col.num_chunks} chunks; "
+                    "combining into one contiguous buffer (allocates memory)",
+                    stacklevel=2,
+                )
+            col_dict[name] = _arrow_col_to_lgdo(col.combine_chunks(), field)
+        return Table(col_dict=col_dict)
 
-    for name in arrow_table.column_names:
-        field = arrow_table.schema.field(name)
-        col = arrow_table.column(name)
-        if col.num_chunks != 1:
+    if isinstance(obj, pa.ChunkedArray):
+        if obj.num_chunks != 1:
             warnings.warn(
-                f"Column '{name}' has {col.num_chunks} chunks; "
+                f"ChunkedArray has {obj.num_chunks} chunks; "
                 "combining into one contiguous buffer (allocates memory)",
                 stacklevel=2,
             )
-        col_dict[name] = _arrow_col_to_lgdo(col.combine_chunks(), field)
+        return _arrow_col_to_lgdo(obj.combine_chunks(), None)
 
-    return Table(col_dict=col_dict)
+    return _arrow_col_to_lgdo(obj, None)
 
 
 def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field | None):
