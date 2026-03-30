@@ -199,7 +199,7 @@ def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field | None):
     if isinstance(col.type, pa.ListType):
         offsets = col.offsets.to_numpy(zero_copy_only=True, writable=False)
 
-        if isinstance(col.values.type, pa.ListType):
+        if isinstance(col.values.type, (pa.ListType, pa.FixedSizeListType, pa.StructType)):
             flattened = _arrow_col_to_lgdo(col.values, None)
         else:
             flattened = col.values.to_numpy(zero_copy_only=False, writable=False)

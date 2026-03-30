@@ -132,6 +132,18 @@ class TestRoundTrip:
         assert_array_equal(back.flattened_data, flat)
         assert_array_equal(back._offsets.nda, offsets)
 
+    def test_vov_with_aoesa_flattened_data(self):
+        """VoV whose flattened_data is an AOESA (ListArray<FixedSizeListArray>)."""
+        inner = ArrayOfEqualSizedArrays(nda=np.arange(12).reshape(4, 3))
+        offsets = np.array([0, 2, 4])
+        original = VectorOfVectors(flattened_data=inner, offsets=offsets)
+        arrow = lgdo_to_arrow(original)
+        back = arrow_to_lgdo(arrow)
+        assert isinstance(back, VectorOfVectors)
+        assert isinstance(back.flattened_data, ArrayOfEqualSizedArrays)
+        assert_array_equal(back.flattened_data.nda, inner.nda)
+        assert_array_equal(back._offsets.nda, offsets)
+
     def test_waveform_table(self):
         original = _make_waveform_table()
         back = arrow_to_lgdo(lgdo_to_arrow(original))
