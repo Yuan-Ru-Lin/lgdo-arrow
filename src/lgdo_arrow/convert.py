@@ -7,12 +7,33 @@ or columns containing nulls that need sentinel values). Multi-chunk columns
 are combined automatically with a warning.
 """
 
+import json
 import warnings
 
 import numpy as np
 import pyarrow as pa
 from lgdo import Array, ArrayOfEqualSizedArrays, Table, VectorOfVectors
 from lgdo.types.waveformtable import WaveformTable
+
+
+# ============ Attrs serialization ============
+
+
+def _serialize_attr(value) -> str:
+    """Serialize an attr value to a JSON string for Arrow metadata."""
+    try:
+        return json.dumps(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _deserialize_attr(raw: bytes):
+    """Deserialize an Arrow metadata value back to a Python object."""
+    s = raw.decode()
+    try:
+        return json.loads(s)
+    except (json.JSONDecodeError, ValueError):
+        return s
 
 
 # ============ LGDO → Arrow ============
@@ -52,7 +73,7 @@ def _lgdo_col_to_arrow(col) -> pa.Array:
             child_arr = _lgdo_col_to_arrow(sub_col)
             meta = None
             if hasattr(sub_col, "attrs") and sub_col.attrs:
-                meta = {k: str(v) for k, v in sub_col.attrs.items()}
+                meta = {k: _serialize_attr(v) for k, v in sub_col.attrs.items()}
             child_fields.append(pa.field(name, child_arr.type, metadata=meta))
             child_arrays.append(child_arr)
         return pa.StructArray.from_arrays(child_arrays, fields=child_fields)
@@ -116,7 +137,7 @@ def _arrow_col_to_lgdo(col: pa.Array, field: pa.Field | None):
     other StructArrays become plain Tables.
     """
     attrs = (
-        {k.decode(): v.decode() for k, v in field.metadata.items()}
+        {k.decode(): _deserialize_attr(v) for k, v in field.metadata.items()}
         if field and field.metadata
         else None
     )
